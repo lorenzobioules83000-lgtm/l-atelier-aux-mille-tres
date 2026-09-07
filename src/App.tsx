@@ -102,8 +102,6 @@ export default function App() {
       }
       return [...prevCart, { id: product.id, nom: product.nom, prix: numericPrice, quantity: 1 }];
     });
-    setIsCartOpen(true);
-    setCheckoutStep('cart');
   };
 
   const updateQuantity = (id: number, delta: number) => {
@@ -123,7 +121,6 @@ export default function App() {
   const totalAmount = cart.reduce((sum, item) => sum + item.prix * item.quantity, 0);
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // Fonction pour uploader l'image sur Supabase Storage
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     try {
       const files = e.target.files;
@@ -135,7 +132,6 @@ export default function App() {
       const fileName = `${Math.random()}.${fileExt}`;
       const filePath = `${fileName}`;
 
-      // Upload dans le bucket 'images'
       const { error: uploadError } = await supabase.storage
         .from('images')
         .upload(filePath, file);
@@ -144,7 +140,6 @@ export default function App() {
         throw uploadError;
       }
 
-      // Récupérer l'URL publique de l'image
       const { data } = supabase.storage.from('images').getPublicUrl(filePath);
 
       setNewProduct((prev) => ({ ...prev, imgUrl: data.publicUrl }));
@@ -242,7 +237,6 @@ export default function App() {
 
               <input type="text" placeholder="Ou nouvelle catégorie..." value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="w-full p-3 border border-dashed border-[#3c2820]/30 rounded-xl text-sm focus:outline-none" />
               
-              {/* CHAMP UPLOAD DEPUIS L'APPAREIL */}
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-gray-600">Importer une image :</label>
                 <input 
@@ -277,7 +271,9 @@ export default function App() {
               {products.map((product) => (
                 <div key={product.id} className="bg-white rounded-2xl overflow-hidden border border-[#3c2820]/15 shadow-xs flex flex-col justify-between p-4">
                   <div>
-                    <img src={product.img} alt={product.nom} className="w-full h-36 object-cover rounded-xl mb-3" />
+                    <div className="w-full h-36 bg-[#f3efe6] rounded-xl overflow-hidden mb-3 flex items-center justify-center">
+                      <img src={product.img} alt={product.nom} className="w-full h-full object-cover" />
+                    </div>
                     <span className="text-[10px] bg-[#faf7f2] text-[#3c2820] px-2.5 py-1 rounded-full font-semibold uppercase">{product.categorie}</span>
                     <h3 className="font-serif font-bold text-base mt-2">{product.nom}</h3>
                     <p className="text-sm font-bold mt-1 text-[#c58a79]">{Number(product.prix).toFixed(2)} €</p>
@@ -301,11 +297,13 @@ export default function App() {
           <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain rounded-full border border-[#3c2820]/15" onError={(e)=>{ (e.target as HTMLElement).style.display = 'none'; }} />
           <h1 className="text-xl font-bold font-serif">L'atelier aux mille trésors</h1>
         </div>
+        
         <button
           onClick={() => { setIsCartOpen(true); setCheckoutStep('cart'); }}
-          className="flex items-center space-x-2 bg-[#f5efe6] border border-[#3c2820]/15 px-4 py-2 rounded-xl text-sm font-medium hover:bg-[#ede5d8] transition shadow-xs"
+          style={{ backgroundColor: '#c58a79', color: '#ffffff' }}
+          className="flex items-center space-x-2 px-4 py-2 rounded-xl text-sm font-semibold transition shadow-xs hover:opacity-90"
         >
-          <span>🛒 Panier ({totalItemsCount})</span>
+          <span>Panier ({totalItemsCount} - {totalAmount.toFixed(2)} €)</span>
         </button>
       </header>
 
@@ -318,7 +316,10 @@ export default function App() {
               return (
                 <div key={product.id} className="bg-white rounded-2xl overflow-hidden border border-[#3c2820]/15 shadow-xs flex flex-col justify-between">
                   <div>
-                    <img src={product.img} alt={product.nom} className="w-full h-48 object-cover" />
+                    {/* Conteneur élégant avec un fond crème chaud et l'image en object-cover plein format */}
+                    <div className="w-full h-64 bg-[#f3efe6] overflow-hidden relative flex items-center justify-center">
+                      <img src={product.img} alt={product.nom} className="w-full h-full object-cover hover:scale-105 transition duration-300" />
+                    </div>
                     <div className="p-4">
                       <span className="text-[10px] bg-[#faf7f2] px-2.5 py-1 rounded-full text-[#3c2820] font-semibold uppercase">{product.categorie}</span>
                       <h3 className="font-serif font-bold text-lg mt-2">{product.nom}</h3>
