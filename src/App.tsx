@@ -8,7 +8,7 @@ const stripePromise = loadStripe(
 
 interface Product {
   id: number;
-  nom: string;
+  nom: string;  
   prix: string;
   categorie: string;
   img: string;
