@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 interface Product {
   id: number;
@@ -286,6 +287,7 @@ export default function App() {
             </div>
           </div>
         </div>
+        <SpeedInsights />
       </div>
     );
   }
@@ -432,6 +434,7 @@ export default function App() {
           </div>
         )}
       </main>
+      <SpeedInsights />
     </div>
   );
 }  
