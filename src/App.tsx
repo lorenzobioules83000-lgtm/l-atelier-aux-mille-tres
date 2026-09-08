@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import { loadStripe } from '@stripe/stripe-js';
+import emailjs from '@emailjs/browser';
+
+const stripePromise = loadStripe('pk_live_51UAwTd1sw06fcAlG3gEh2Ko6LdRuo0uiwaBfsUPWiPQ4fdq1xx6xtVxMKnmWCwzIr5rlrhstO533TGeoDWHYFSsY00kiYfp7Wr');
+
+// ==========================================
+// CONFIGURATION EMAILJS & IDENTIFIANTS
+// ==========================================
+const EMAILJS_SERVICE_ID = 'service_xsiu4de';
+const EMAILJS_TEMPLATE_ID = 'template_814jv1h';
+const EMAILJS_PUBLIC_KEY = 'BIjG1I0PqxOF4gcWz';
 
 interface Product {
   id: number;
@@ -56,6 +67,14 @@ export default function App() {
 
   useEffect(() => {
     fetchProducts();
+
+    const queryParams = new URLSearchParams(window.location.search);
+    if (queryParams.get('success') === 'true') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+      setCart([]);
+    } else if (queryParams.get('canceled') === 'true') {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }, []);
 
   const fetchProducts = async () => {
@@ -64,11 +83,7 @@ export default function App() {
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) {
-      console.error('Erreur chargement produits:', error);
-    } else if (data) {
-      setProducts(data);
-    }
+    if (!error && data) setProducts(data);
   };
 
   const handleLogoClick = () => {
@@ -82,7 +97,9 @@ export default function App() {
 
       if (!isAdminOpen) {
         const pwd = prompt('Entrez le mot de passe admin :');
-        if (pwd === 'admin123') setIsAdminOpen(true);
+        if (pwd === 'admin123') {
+          setIsAdminOpen(true);
+        }
         else if (pwd !== null) alert('Mot de passe incorrect !');
       } else {
         setIsAdminOpen(false);
@@ -136,12 +153,9 @@ export default function App() {
         .from('images')
         .upload(filePath, file);
 
-      if (uploadError) {
-        throw uploadError;
-      }
+      if (uploadError) throw uploadError;
 
       const { data } = supabase.storage.from('images').getPublicUrl(filePath);
-
       setNewProduct((prev) => ({ ...prev, imgUrl: data.publicUrl }));
       alert('Image uploadée avec succès !');
     } catch (error) {
@@ -152,7 +166,7 @@ export default function App() {
     }
   };
 
-  const handleAddProduct = async (e: React.FormEvent) => {
+  const handleAddProductReal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProduct.nom.trim() || !newProduct.prix.trim()) {
       return alert('Merci de renseigner un nom et un prix.');
@@ -192,97 +206,111 @@ export default function App() {
     if (!error) fetchProducts();
   };
 
-  const handleFinalOrder = (e: React.FormEvent) => {
+  const handleCheckoutPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!shippingInfo.prenom || !shippingInfo.nom || !shippingInfo.email || !shippingInfo.adresse || !shippingInfo.codePostal || !shippingInfo.ville) {
       return alert('Veuillez remplir tous les champs de livraison.');
     }
+
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const detailsPanier = cart.map(item => `- ${item.quantity}x ${item.nom} (${(item.prix * item.quantity).toFixed(2)} €)`).join('\n');
+      
+      const emailParams = {
+        name: `${shippingInfo.prenom} ${shippingInfo.nom}`,
+        client_nom: `${shippingInfo.prenom} ${shippingInfo.nom}`,
+        client_email: shippingInfo.email,
+        adresse_livraison: `${shippingInfo.adresse}, ${shippingInfo.codePostal} ${shippingInfo.ville}`,
+        articles: detailsPanier,
+        total: `${totalAmount.toFixed(2)} €`
+      };
+
+      await emailjs.send(
+        EMAILJS_SERVICE_ID,
+        EMAILJS_TEMPLATE_ID,
+        emailParams,
+        EMAILJS_PUBLIC_KEY
+      );
+
+      const { data, error } = await supabase.functions.invoke('create-stripe-checkout', {
+        body: { 
+          cart: cart,
+          shipping: shippingInfo 
+        }
+      });
+
+      if (error) throw error;
+      if (!data || !data.url) throw new Error("Aucune URL de paiement reçue.");
+
+      window.location.href = data.url;
+
+    } catch (error) {
+      console.error(error);
+      alert("Erreur lors de l'envoi de l'e-mail ou de la création du paiement.");
       setLoading(false);
-      alert('Commande validée avec succès ! Merci pour votre achat.');
-      setCart([]);
-      setIsCartOpen(false);
-      setCheckoutStep('cart');
-      setShippingInfo({ prenom: '', nom: '', email: '', adresse: '', codePostal: '', ville: '' });
-    }, 1000);
+    }
   };
 
+  // Vue Admin
   if (isAdminOpen) {
     return (
       <div className="min-h-screen bg-[#faf7f2] text-[#3c2820] font-sans p-6">
-        <div className="max-w-5xl mx-auto flex justify-between items-center mb-8">
-          <div className="flex items-center space-x-3">
-            <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain rounded-full border border-[#e7dfe3]" onError={(e)=>{ (e.target as HTMLElement).style.display = 'none'; }} />
-            <h1 className="text-2xl font-bold font-serif">Administration</h1>
+        <div className="max-w-6xl mx-auto flex justify-between items-center mb-8">
+          <div className="flex items-center gap-6">
+            <h1 className="text-2xl font-bold font-serif">Administration - Produits ({products.length})</h1>
           </div>
           <div className="flex gap-3">
             <button onClick={() => setIsAdminOpen(false)} className="px-4 py-2 bg-white border border-[#3c2820]/20 rounded-xl text-sm font-semibold shadow-xs hover:bg-[#f5efe6]">Voir le site</button>
-            <button onClick={() => setIsAdminOpen(false)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800">Déconnexion</button>
+            <button onClick={() => setIsAdminOpen(false)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-800">Quitter</button>
           </div>
         </div>
 
-        <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="bg-white p-6 rounded-2xl border border-[#3c2820]/15 shadow-sm md:col-span-1 h-fit space-y-4">
-            <h2 className="text-lg font-bold">➕ Ajouter un article</h2>
-            <form onSubmit={handleAddProduct} className="space-y-3">
-              <input type="text" placeholder="Nom du produit" value={newProduct.nom} onChange={(e) => setNewProduct({ ...newProduct, nom: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-              <input type="number" step="0.01" placeholder="Prix (€)" value={newProduct.prix} onChange={(e) => setNewProduct({ ...newProduct, prix: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-              
-              <select value={newProduct.categorie} onChange={(e) => setNewProduct({ ...newProduct, categorie: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none bg-white">
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>{cat}</option>
-                ))}
-              </select>
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="bg-white p-6 rounded-2xl border border-[#3c2820]/15 shadow-sm md:col-span-1 h-fit space-y-4">
+              <h2 className="text-lg font-bold">➕ Ajouter un article</h2>
+              <form onSubmit={handleAddProductReal} className="space-y-3">
+                <input type="text" placeholder="Nom du produit" value={newProduct.nom} onChange={(e) => setNewProduct({ ...newProduct, nom: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none" />
+                <input type="number" step="0.01" placeholder="Prix (€)" value={newProduct.prix} onChange={(e) => setNewProduct({ ...newProduct, prix: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none" />
+                
+                <select value={newProduct.categorie} onChange={(e) => setNewProduct({ ...newProduct, categorie: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm bg-white">
+                  {categories.map((cat) => (<option key={cat} value={cat}>{cat}</option>))}
+                </select>
 
-              <input type="text" placeholder="Ou nouvelle catégorie..." value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="w-full p-3 border border-dashed border-[#3c2820]/30 rounded-xl text-sm focus:outline-none" />
-              
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-gray-600">Importer une image :</label>
-                <input 
-                  type="file" 
-                  accept="image/*" 
-                  onChange={handleImageUpload} 
-                  className="w-full p-2 border border-[#3c2820]/20 rounded-xl text-xs bg-[#faf7f2] file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#c58a79] file:text-white hover:file:opacity-90" 
-                />
-                {uploadingImage && <p className="text-xs text-amber-700">Upload en cours...</p>}
-                {newProduct.imgUrl && !uploadingImage && <p className="text-xs text-green-600">✓ Image prête</p>}
-              </div>
-
-              <textarea placeholder="Description" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none" rows={2}></textarea>
-
-              <button type="submit" style={{ backgroundColor: '#c58a79', color: '#ffffff' }} className="w-full py-3 font-semibold rounded-xl shadow-xs transition hover:opacity-90">Publier</button>
-            </form>
-          </div>
-
-          <div className="md:col-span-2 space-y-6">
-            <h2 className="text-xl font-serif font-bold">Catégories actuelles</h2>
-            <div className="bg-white p-4 rounded-2xl border border-[#3c2820]/15 space-y-2 mb-6">
-              {categories.map((cat) => (
-                <div key={cat} className="flex justify-between items-center py-2 px-3 bg-[#faf7f2] rounded-xl text-sm font-medium">
-                  <span>{cat}</span>
-                  <span className="text-xs text-amber-800">✏️</span>
+                <input type="text" placeholder="Ou nouvelle catégorie..." value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="w-full p-3 border border-dashed border-[#3c2820]/30 rounded-xl text-sm" />
+                
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-gray-600">Importer une image :</label>
+                  <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full p-2 border border-[#3c2820]/20 rounded-xl text-xs bg-[#faf7f2]" />
+                  {uploadingImage && <p className="text-xs text-amber-700">Upload en cours...</p>}
+                  {newProduct.imgUrl && !uploadingImage && <p className="text-xs text-green-600">✓ Image prête</p>}
                 </div>
-              ))}
+
+                <textarea placeholder="Description" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm" rows={2}></textarea>
+
+                <button type="submit" style={{ backgroundColor: '#c58a79', color: '#ffffff' }} className="w-full py-3 font-semibold rounded-xl shadow-xs transition hover:opacity-90">Publier</button>
+              </form>
             </div>
 
-            <h2 className="text-xl font-serif font-bold">Catalogue actuel</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {products.map((product) => (
-                <div key={product.id} className="bg-white rounded-2xl overflow-hidden border border-[#3c2820]/15 shadow-xs flex flex-col justify-between p-4">
-                  <div>
-                    <div className="w-full h-36 bg-[#f3efe6] rounded-xl overflow-hidden mb-3 flex items-center justify-center">
-                      <img src={product.img} alt={product.nom} className="w-full h-full object-cover" />
+            <div className="md:col-span-2 space-y-6">
+              <h2 className="text-xl font-serif font-bold">Catalogue actuel</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {products.map((product) => (
+                  <div key={product.id} className="bg-white rounded-2xl overflow-hidden border border-[#3c2820]/15 shadow-xs flex flex-col justify-between p-4">
+                    <div>
+                      <div className="w-full h-36 bg-[#f3efe6] rounded-xl overflow-hidden mb-3 flex items-center justify-center">
+                        <img src={product.img} alt={product.nom} className="w-full h-full object-cover" />
+                      </div>
+                      <span className="text-[10px] bg-[#faf7f2] text-[#3c2820] px-2.5 py-1 rounded-full font-semibold uppercase">{product.categorie}</span>
+                      <h3 className="font-serif font-bold text-base mt-2">{product.nom}</h3>
+                      <p className="text-sm font-bold mt-1 text-[#c58a79]">{Number(product.prix).toFixed(2)} €</p>
                     </div>
-                    <span className="text-[10px] bg-[#faf7f2] text-[#3c2820] px-2.5 py-1 rounded-full font-semibold uppercase">{product.categorie}</span>
-                    <h3 className="font-serif font-bold text-base mt-2">{product.nom}</h3>
-                    <p className="text-sm font-bold mt-1 text-[#c58a79]">{Number(product.prix).toFixed(2)} €</p>
+                    <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end">
+                      <button onClick={() => handleDeleteProduct(product.id)} className="text-gray-400 hover:text-red-500 p-1 text-sm">🗑️</button>
+                    </div>
                   </div>
-                  <div className="mt-4 pt-3 border-t border-gray-100 flex justify-end">
-                    <button onClick={() => handleDeleteProduct(product.id)} className="text-gray-400 hover:text-red-500 p-1 text-sm">🗑️</button>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -290,11 +318,12 @@ export default function App() {
     );
   }
 
+  // Vue Client
   return (
     <div className="min-h-screen bg-[#faf7f2] text-[#3c2820] font-sans pb-16 relative">
       <header className="py-4 px-6 bg-white border-b border-[#3c2820]/10 sticky top-0 z-20 flex justify-between items-center shadow-xs">
         <div onClick={handleLogoClick} className="flex items-center space-x-3 cursor-pointer select-none">
-          <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain rounded-full border border-[#3c2820]/15" onError={(e)=>{ (e.target as HTMLElement).style.display = 'none'; }} />
+          <img src="/logo.png" alt="Logo" className="w-10 h-10 object-contain rounded-full" />
           <h1 className="text-xl font-bold font-serif">L'atelier aux mille trésors</h1>
         </div>
         
@@ -316,7 +345,6 @@ export default function App() {
               return (
                 <div key={product.id} className="bg-white rounded-2xl overflow-hidden border border-[#3c2820]/15 shadow-xs flex flex-col justify-between">
                   <div>
-                    {/* Conteneur élégant avec un fond crème chaud et l'image en object-cover plein format */}
                     <div className="w-full h-64 bg-[#f3efe6] overflow-hidden relative flex items-center justify-center">
                       <img src={product.img} alt={product.nom} className="w-full h-full object-cover hover:scale-105 transition duration-300" />
                     </div>
@@ -328,9 +356,7 @@ export default function App() {
                   </div>
                   
                   <div className="p-4 pt-2 flex items-center justify-between border-t border-gray-100 bg-white">
-                    <span className="font-bold text-lg">
-                      {!isNaN(displayPrice) ? displayPrice.toFixed(2) : '0.00'} €
-                    </span>
+                    <span className="font-bold text-lg">{!isNaN(displayPrice) ? displayPrice.toFixed(2) : '0.00'} €</span>
                     <button
                       onClick={() => addToCart(product)}
                       style={{ backgroundColor: '#c58a79', color: '#ffffff' }}
@@ -353,7 +379,7 @@ export default function App() {
                 <div>
                   <div className="flex items-center justify-between pb-4 border-b border-[#3c2820]/10">
                     {checkoutStep === 'shipping' ? (
-                      <button onClick={() => setCheckoutStep('cart')} className="text-xs font-semibold text-gray-600 hover:text-black">← Retour au panier</button>
+                      <button onClick={() => setCheckoutStep('cart')} className="text-xs font-semibold text-gray-600">← Retour au panier</button>
                     ) : (
                       <h2 className="text-lg font-serif font-bold">Mon Panier</h2>
                     )}
@@ -368,11 +394,9 @@ export default function App() {
                         <div className="divide-y divide-gray-100 mt-4 max-h-[55vh] overflow-y-auto pr-1">
                           {cart.map((item) => (
                             <div key={item.id} className="py-3 flex items-center justify-between">
-                              <div className="flex items-center space-x-3">
-                                <div>
-                                  <h4 className="font-medium text-sm">{item.nom}</h4>
-                                  <p className="text-xs text-gray-500">{(item.prix).toFixed(2)} €</p>
-                                </div>
+                              <div>
+                                <h4 className="font-medium text-sm">{item.nom}</h4>
+                                <p className="text-xs text-gray-500">{(item.prix).toFixed(2)} €</p>
                               </div>
                               <div className="flex items-center space-x-2">
                                 <button onClick={() => updateQuantity(item.id, -1)} className="px-2.5 py-1 bg-gray-100 rounded-lg text-sm font-bold">-</button>
@@ -386,16 +410,17 @@ export default function App() {
                       )}
                     </>
                   ) : (
-                    <form onSubmit={handleFinalOrder} id="shipping-form" className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto pr-1">
+                    <form onSubmit={handleCheckoutPayment} id="shipping-form" className="mt-4 space-y-3 max-h-[60vh] overflow-y-auto pr-1">
                       <h3 className="font-serif font-bold text-sm text-[#3c2820] mb-2">Informations de livraison & Paiement</h3>
-                      <input type="text" placeholder="Prénom" required value={shippingInfo.prenom} onChange={(e)=>setShippingInfo({...shippingInfo, prenom: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-                      <input type="text" placeholder="Nom" required value={shippingInfo.nom} onChange={(e)=>setShippingInfo({...shippingInfo, nom: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-                      <input type="email" placeholder="Adresse e-mail" required value={shippingInfo.email} onChange={(e)=>setShippingInfo({...shippingInfo, email: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-                      <input type="text" placeholder="Adresse postale" required value={shippingInfo.adresse} onChange={(e)=>setShippingInfo({...shippingInfo, adresse: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
+                      <input type="text" placeholder="Prénom" required value={shippingInfo.prenom} onChange={(e)=>setShippingInfo({...shippingInfo, prenom: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
+                      <input type="text" placeholder="Nom" required value={shippingInfo.nom} onChange={(e)=>setShippingInfo({...shippingInfo, nom: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
+                      <input type="email" placeholder="Adresse e-mail" required value={shippingInfo.email} onChange={(e)=>setShippingInfo({...shippingInfo, email: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
+                      <input type="text" placeholder="Adresse postale" required value={shippingInfo.adresse} onChange={(e)=>setShippingInfo({...shippingInfo, adresse: e.target.value})} className="w-full p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
                       <div className="grid grid-cols-2 gap-2">
-                        <input type="text" placeholder="Code postal" required value={shippingInfo.codePostal} onChange={(e)=>setShippingInfo({...shippingInfo, codePostal: e.target.value})} className="p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
-                        <input type="text" placeholder="Ville" required value={shippingInfo.ville} onChange={(e)=>setShippingInfo({...shippingInfo, ville: e.target.value})} className="p-2.5 border border-[#3c2820]/20 rounded-xl text-sm focus:outline-none focus:border-[#3c2820]" />
+                        <input type="text" placeholder="Code postal" required value={shippingInfo.codePostal} onChange={(e)=>setShippingInfo({...shippingInfo, codePostal: e.target.value})} className="p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
+                        <input type="text" placeholder="Ville" required value={shippingInfo.ville} onChange={(e)=>setShippingInfo({...shippingInfo, ville: e.target.value})} className="p-2.5 border border-[#3c2820]/20 rounded-xl text-sm" />
                       </div>
+                      <p className="text-[11px] text-gray-400 pt-1">Le numéro de téléphone vous sera demandé de manière sécurisée lors de l'étape de paiement sur Stripe.</p>
                     </form>
                   )}
                 </div>
@@ -423,7 +448,7 @@ export default function App() {
                       style={{ backgroundColor: '#c58a79', color: '#ffffff' }}
                       className="w-full py-3 font-semibold rounded-xl shadow-xs transition hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
-                      {loading ? 'Traitement...' : `Payer et commander (${totalAmount.toFixed(2)} €) 💳`}
+                      {loading ? 'Redirection...' : `Payer par carte (${totalAmount.toFixed(2)} €) 💳`}
                     </button>
                   )}
                 </div>
