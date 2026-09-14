@@ -574,11 +574,12 @@ export default function App() {
                     </button>
                   )}
                 </div>
-              </div>
+              </div> 
             </div>
           </div>
         )}
       </main>
     </div>
   );
-}s
+  //
+}
