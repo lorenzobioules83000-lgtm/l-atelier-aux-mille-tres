@@ -12,6 +12,9 @@ const EMAILJS_SERVICE_ID = 'service_xsiu4de';
 const EMAILJS_TEMPLATE_ID = 'template_814jv1h';
 const EMAILJS_PUBLIC_KEY = 'BIjG1I0PqxOF4gcWz';
 
+// ID de ton Stripe Payment Link
+const STRIPE_PAYMENT_LINK_ID = 'aFaeV54b66sj3eGb1FaEE00';
+
 interface Product {
   id: number;
   nom: string;  
@@ -19,6 +22,8 @@ interface Product {
   categorie: string;
   img: string;
   description: string;
+  is_customizable?: boolean;
+  custom_label?: string;
 }
 
 interface CartItem {
@@ -26,6 +31,9 @@ interface CartItem {
   nom: string;
   prix: number;
   quantity: number;
+  is_customizable?: boolean;
+  customValue?: string;
+  customLabel?: string;
 }
 
 export default function App() {
@@ -37,6 +45,9 @@ export default function App() {
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [checkoutStep, setCheckoutStep] = useState<'cart' | 'shipping'>('cart');
+
+  // Stockage temporaire des valeurs de personnalisation pour chaque produit avant l'ajout au panier
+  const [customInputs, setCustomInputs] = useState<{ [productId: number]: string }>({});
 
   const [shippingInfo, setShippingInfo] = useState({
     prenom: '',
@@ -55,7 +66,9 @@ export default function App() {
     prix: '',
     categorie: 'Créations florales',
     imgUrl: '',
-    description: ''
+    description: '',
+    is_customizable: false,
+    custom_label: 'Prénom ou couleur souhaitée'
   });
 
   const [categories, setCategories] = useState<string[]>([
@@ -109,30 +122,59 @@ export default function App() {
 
   const addToCart = (product: Product) => {
     const numericPrice = typeof product.prix === 'string' ? parseFloat(product.prix) : product.prix;
+    const customVal = customInputs[product.id] || '';
+
+    // Si le produit est personnalisable, vérifier que le champ est rempli
+    if (product.is_customizable && !customVal.trim()) {
+      return alert(`Veuillez remplir le champ de personnalisation (${product.custom_label || 'Personnalisation'}) avant d'ajouter l'article au panier.`);
+    }
 
     setCart((prevCart) => {
-      const existing = prevCart.find((item) => item.id === product.id);
-      if (existing) {
-        return prevCart.map((item) =>
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
-        );
+      // Si l'article est personnalisable, on le traite comme une ligne distincte s'il a une personnalisation différente
+      const existingIndex = prevCart.findIndex(
+        (item) => item.id === product.id && item.customValue === customVal
+      );
+
+      if (existingIndex > -1) {
+        const updated = [...prevCart];
+        updated[existingIndex].quantity += 1;
+        return updated;
       }
-      return [...prevCart, { id: product.id, nom: product.nom, prix: numericPrice, quantity: 1 }];
+
+      return [
+        ...prevCart,
+        {
+          id: product.id,
+          nom: product.nom,
+          prix: numericPrice,
+          quantity: 1,
+          is_customizable: product.is_customizable,
+          customValue: customVal,
+          customLabel: product.custom_label
+        }
+      ];
+    });
+
+    // Réinitialiser le champ de saisie pour ce produit
+    setCustomInputs(prev => ({ ...prev, [product.id]: '' }));
+    alert('Article ajouté au panier !');
+  };
+
+  const updateQuantity = (index: number, delta: number) => {
+    setCart((prevCart) => {
+      const updated = [...prevCart];
+      const newQty = updated[index].quantity + delta;
+      if (newQty > 0) {
+        updated[index].quantity = newQty;
+      } else {
+        updated.splice(index, 1);
+      }
+      return updated;
     });
   };
 
-  const updateQuantity = (id: number, delta: number) => {
-    setCart((prevCart) =>
-      prevCart
-        .map((item) => {
-          if (item.id === id) {
-            const newQty = item.quantity + delta;
-            return newQty > 0 ? { ...item, quantity: newQty } : null;
-          }
-          return item;
-        })
-        .filter(Boolean) as CartItem[]
-    );
+  const removeCartItem = (index: number) => {
+    setCart((prevCart) => prevCart.filter((_, i) => i !== index));
   };
 
   const totalAmount = cart.reduce((sum, item) => sum + item.prix * item.quantity, 0);
@@ -186,6 +228,8 @@ export default function App() {
       categorie: finalCategory,
       img: newProduct.imgUrl.trim() || 'https://images.unsplash.com/photo-1513519245088-0e12902e5a38?w=500',
       description: newProduct.description.trim() || 'Création artisanale de L’atelier aux mille trésors.',
+      is_customizable: newProduct.is_customizable,
+      custom_label: newProduct.is_customizable ? newProduct.custom_label.trim() : null
     };
 
     const { error } = await supabase.from('products').insert([itemToInsert]);
@@ -194,7 +238,15 @@ export default function App() {
       alert("Erreur lors de l'enregistrement du produit.");
     } else {
       alert('Produit ajouté avec succès !');
-      setNewProduct({ nom: '', prix: '', categorie: categories[0] || 'Créations florales', imgUrl: '', description: '' });
+      setNewProduct({
+        nom: '',
+        prix: '',
+        categorie: categories[0] || 'Créations florales',
+        imgUrl: '',
+        description: '',
+        is_customizable: false,
+        custom_label: 'Prénom ou couleur souhaitée'
+      });
       setNewCategory('');
       fetchProducts();
     }
@@ -212,9 +264,19 @@ export default function App() {
       return alert('Veuillez remplir tous les champs de livraison.');
     }
 
+    // Double vérification de sécurité du panier avant validation
+    for (const item of cart) {
+      if (item.is_customizable && !item.customValue?.trim()) {
+        return alert(`L'article "${item.nom}" requiert une personnalisation. Veuillez vérifier votre panier.`);
+      }
+    }
+
     setLoading(true);
     try {
-      const detailsPanier = cart.map(item => `- ${item.quantity}x ${item.nom} (${(item.prix * item.quantity).toFixed(2)} €)`).join('\n');
+      const detailsPanier = cart.map(item => {
+        const customText = item.customValue ? ` (Perso: ${item.customValue})` : '';
+        return `- ${item.quantity}x ${item.nom}${customText} — ${(item.prix * item.quantity).toFixed(2)} €`;
+      }).join('\n');
       
       const emailParams = {
         name: `${shippingInfo.prenom} ${shippingInfo.nom}`,
@@ -225,6 +287,7 @@ export default function App() {
         total: `${totalAmount.toFixed(2)} €`
       };
 
+      // Envoi de l'e-mail de confirmation via EmailJS
       await emailjs.send(
         EMAILJS_SERVICE_ID,
         EMAILJS_TEMPLATE_ID,
@@ -232,21 +295,17 @@ export default function App() {
         EMAILJS_PUBLIC_KEY
       );
 
-      const { data, error } = await supabase.functions.invoke('create-stripe-checkout', {
-        body: { 
-          cart: cart,
-          shipping: shippingInfo 
-        }
-      });
+      // URL de ton Stripe Payment Link
+      const stripeUrl = `https://buy.stripe.com/${STRIPE_PAYMENT_LINK_ID}?prefilled_email=${encodeURIComponent(shippingInfo.email)}`;
 
-      if (error) throw error;
-      if (!data || !data.url) throw new Error("Aucune URL de paiement reçue.");
-
-      window.location.href = data.url;
+      setLoading(false);
+      
+      // Ouverture sécurisée de Stripe dans un nouvel onglet
+      window.open(stripeUrl, '_blank');
 
     } catch (error) {
       console.error(error);
-      alert("Erreur lors de l'envoi de l'e-mail ou de la création du paiement.");
+      alert("Erreur lors de l'envoi de l'e-mail ou de la redirection vers le paiement.");
       setLoading(false);
     }
   };
@@ -288,6 +347,29 @@ export default function App() {
 
                 <textarea placeholder="Description" value={newProduct.description} onChange={(e) => setNewProduct({ ...newProduct, description: e.target.value })} className="w-full p-3 border border-[#3c2820]/20 rounded-xl text-sm" rows={2}></textarea>
 
+                {/* Section Personnalisation Admin */}
+                <div className="p-3 bg-[#faf7f2] rounded-xl border border-[#3c2820]/10 space-y-2">
+                  <label className="flex items-center space-x-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={newProduct.is_customizable}
+                      onChange={(e) => setNewProduct({ ...newProduct, is_customizable: e.target.checked })}
+                      className="rounded text-[#c58a79] focus:ring-0"
+                    />
+                    <span className="text-xs font-bold">Article personnalisable ?</span>
+                  </label>
+
+                  {newProduct.is_customizable && (
+                    <input
+                      type="text"
+                      placeholder="Libellé (ex: Prénom, Couleur, Texte...)"
+                      value={newProduct.custom_label}
+                      onChange={(e) => setNewProduct({ ...newProduct, custom_label: e.target.value })}
+                      className="w-full p-2.5 bg-white border border-[#3c2820]/20 rounded-lg text-xs"
+                    />
+                  )}
+                </div>
+
                 <button type="submit" style={{ backgroundColor: '#c58a79', color: '#ffffff' }} className="w-full py-3 font-semibold rounded-xl shadow-xs transition hover:opacity-90">Publier</button>
               </form>
             </div>
@@ -301,7 +383,12 @@ export default function App() {
                       <div className="w-full h-36 bg-[#f3efe6] rounded-xl overflow-hidden mb-3 flex items-center justify-center">
                         <img src={product.img} alt={product.nom} className="w-full h-full object-cover" />
                       </div>
-                      <span className="text-[10px] bg-[#faf7f2] text-[#3c2820] px-2.5 py-1 rounded-full font-semibold uppercase">{product.categorie}</span>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] bg-[#faf7f2] text-[#3c2820] px-2.5 py-1 rounded-full font-semibold uppercase">{product.categorie}</span>
+                        {product.is_customizable && (
+                          <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">✨ Personnalisable</span>
+                        )}
+                      </div>
                       <h3 className="font-serif font-bold text-base mt-2">{product.nom}</h3>
                       <p className="text-sm font-bold mt-1 text-[#c58a79]">{Number(product.prix).toFixed(2)} €</p>
                     </div>
@@ -348,10 +435,31 @@ export default function App() {
                     <div className="w-full h-64 bg-[#f3efe6] overflow-hidden relative flex items-center justify-center">
                       <img src={product.img} alt={product.nom} className="w-full h-full object-cover hover:scale-105 transition duration-300" />
                     </div>
-                    <div className="p-4">
-                      <span className="text-[10px] bg-[#faf7f2] px-2.5 py-1 rounded-full text-[#3c2820] font-semibold uppercase">{product.categorie}</span>
-                      <h3 className="font-serif font-bold text-lg mt-2">{product.nom}</h3>
-                      <p className="text-sm text-gray-600 mt-1">{product.description}</p>
+                    <div className="p-4 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] bg-[#faf7f2] px-2.5 py-1 rounded-full text-[#3c2820] font-semibold uppercase">{product.categorie}</span>
+                        {product.is_customizable && (
+                          <span className="text-[10px] bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full font-semibold">✨ Personnalisable</span>
+                        )}
+                      </div>
+                      <h3 className="font-serif font-bold text-lg">{product.nom}</h3>
+                      <p className="text-sm text-gray-600">{product.description}</p>
+
+                      {/* Champ de personnalisation si activé pour ce produit */}
+                      {product.is_customizable && (
+                        <div className="pt-2 border-t border-gray-100">
+                          <label className="block text-xs font-semibold text-gray-700 mb-1">
+                            {product.custom_label || 'Personnalisation'} <span className="text-red-500">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            placeholder={`Entrez ${product.custom_label || 'votre choix'}`}
+                            value={customInputs[product.id] || ''}
+                            onChange={(e) => setCustomInputs({ ...customInputs, [product.id]: e.target.value })}
+                            className="w-full p-2.5 bg-[#faf7f2] border border-[#3c2820]/20 rounded-xl text-xs focus:outline-none"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                   
@@ -392,17 +500,22 @@ export default function App() {
                         <p className="text-sm text-gray-500 mt-10 text-center">Votre panier est vide.</p>
                       ) : (
                         <div className="divide-y divide-gray-100 mt-4 max-h-[55vh] overflow-y-auto pr-1">
-                          {cart.map((item) => (
-                            <div key={item.id} className="py-3 flex items-center justify-between">
-                              <div>
+                          {cart.map((item, index) => (
+                            <div key={index} className="py-3 flex items-center justify-between">
+                              <div className="pr-2">
                                 <h4 className="font-medium text-sm">{item.nom}</h4>
                                 <p className="text-xs text-gray-500">{(item.prix).toFixed(2)} €</p>
+                                {item.is_customizable && (
+                                  <p className="text-[11px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded mt-1 border border-amber-200">
+                                    <strong>{item.customLabel || 'Perso'} :</strong> {item.customValue}
+                                  </p>
+                                )}
                               </div>
-                              <div className="flex items-center space-x-2">
-                                <button onClick={() => updateQuantity(item.id, -1)} className="px-2.5 py-1 bg-gray-100 rounded-lg text-sm font-bold">-</button>
+                              <div className="flex items-center space-x-2 shrink-0">
+                                <button onClick={() => updateQuantity(index, -1)} className="px-2.5 py-1 bg-gray-100 rounded-lg text-sm font-bold">-</button>
                                 <span className="text-sm font-semibold w-4 text-center">{item.quantity}</span>
-                                <button onClick={() => updateQuantity(item.id, 1)} className="px-2.5 py-1 bg-gray-100 rounded-lg text-sm font-bold">+</button>
-                                <button onClick={() => updateQuantity(item.id, -item.quantity)} className="text-gray-400 hover:text-red-500 ml-2 text-xs">🗑️</button>
+                                <button onClick={() => updateQuantity(index, 1)} className="px-2.5 py-1 bg-gray-100 rounded-lg text-sm font-bold">+</button>
+                                <button onClick={() => removeCartItem(index)} className="text-gray-400 hover:text-red-500 ml-2 text-xs">🗑️</button>
                               </div>
                             </div>
                           ))}
@@ -433,7 +546,16 @@ export default function App() {
 
                   {checkoutStep === 'cart' ? (
                     <button
-                      onClick={() => setCheckoutStep('shipping')}
+                      onClick={() => {
+                        // Vérification que tous les articles personnalisés ont bien leur valeur
+                        for (const item of cart) {
+                          if (item.is_customizable && !item.customValue?.trim()) {
+                            alert(`L'article "${item.nom}" nécessite que vous remplissiez sa personnalisation.`);
+                            return;
+                          }
+                        }
+                        setCheckoutStep('shipping');
+                      }}
                       disabled={cart.length === 0}
                       style={{ backgroundColor: '#c58a79', color: '#ffffff' }}
                       className="w-full py-3 font-semibold rounded-xl shadow-xs transition hover:opacity-90 disabled:opacity-50"
